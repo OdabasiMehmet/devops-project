@@ -1,16 +1,14 @@
 ---
-- hosts: all # This part is for all nodes
+- hosts: all
   become: true
   tasks:
 
   - name: change hostnames
     shell: "hostnamectl set-hostname {{ hostvars[inventory_hostname]['private_dns_name'] }}"
-# Hostsvars is a magic variable. With hostvars , you can access variables defined for any host in the play, 
-# at any point in a playbook.
 
-  - name: swap off # Swap reduces performance.
+  - name: swap off
     shell: |
-      free -m 
+      free -m
       swapoff -a && sed -i '/ swap / s/^/#/' /etc/fstab
 
   - name: Enable the nodes to see bridged traffic
@@ -22,23 +20,23 @@
       sysctl --system
 
   - name: update apt-get
-    shell: apt-get update # We will have ubuntu nodes so we use apt
+    shell: apt-get update
 
   - name: Install packages that allow apt to be used over HTTPS
     apt:
-      name: "{{ packages }}"  # Here we use a loop and we use packages as variable which we use below in vars.
+      name: "{{ packages }}"
       state: present
       update_cache: yes
     vars:
-      packages: # Ubuntu by default does not have curl, so we will install curl
-      - apt-transport-https
+      packages:
+      - apt-transport-https  
       - curl
       - ca-certificates
 
   - name: update apt-get and install kube packages
     shell: |
-      curl -shttps://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add - && \
-      echo "debhttp://apt.kubernetes.io/ kubernetes-xenial main" | sudo tee /etc/apt/sources.list.d/kubernetes.list && \
+      curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add - && \
+      echo "deb http://apt.kubernetes.io/ kubernetes-xenial main" | sudo tee /etc/apt/sources.list.d/kubernetes.list && \
       apt-get update -q && \
       apt-get install -qy kubelet=1.23.5-00 kubectl=1.23.5-00 kubeadm=1.23.5-00 docker.io
 
@@ -53,9 +51,8 @@
       state: restarted
       enabled: yes
 
-  # change the Docker cgroup driver by creating a configuration file `/etc/docker/daemon.json`
+  # change the Docker cgroup driver by creating a configuration file `/etc/docker/daemon.json` 
   # and adding the following line then restart deamon, docker and kubelet
-  # When everything is in systemd, it is more stable
 
   - name: change the Docker cgroup
     shell: |
@@ -64,21 +61,21 @@
       sudo systemctl restart docker
       sudo systemctl restart kubelet
 
-# NOW WE START A SECOND PLAY FOR EACH NODE
-- hosts: role_master 
-  tasks:
 
+- hosts: role_master
+  tasks:
+      
   - name: pull kubernetes images before installation
     become: yes
     shell: kubeadm config images pull
 
   - name: copy the configuration
     become: yes
-    copy:
-      src: ./clusterconfig-base.yml # This is the file we created earlier (playbook and file are at te same location)
-      dest: /home/ubuntu/ # Will be copied to master machines home folder
-
-  - name: get gettext-base # We need this to be able to use envsubst
+    copy: 
+      src: ./clusterconfig-base.yml
+      dest: /home/ubuntu/
+  
+  - name: get gettext-base
     become: true
     apt:
       package: gettext-base
@@ -88,22 +85,19 @@
     shell: |
       export CONTROLPLANE_ENDPOINT={{ hostvars[inventory_hostname]['private_ip_address'] }}
       envsubst < /home/ubuntu/clusterconfig-base.yml > /home/ubuntu/clusterconfig.yml
-# export command passes the variable value. Here we run shell command at the master node
-# Then save the value as CONTROL_PLANE_ENDPOINT and substitute it with envsubst
-# in the config-base yml and save it in the ubuntu master node as config.yml
+
   - name: initialize the Kubernetes cluster using kubeadm
     become: true
     shell: |
       kubeadm init --config /home/ubuntu/clusterconfig.yml
-
+    
   - name: Setup kubeconfig for ubuntu user
     become: true
-    command: "{{ item }}" # Like a loop. With_items it will run all the three commands below
+    command: "{{ item }}"
     with_items:
      - mkdir -p /home/ubuntu/.kube
      - cp -i /etc/kubernetes/admin.conf /home/ubuntu/.kube/config
      - chown ubuntu:ubuntu /home/ubuntu/.kube/config
-# chown [OPTION]… [OWNER][:[GROUP]] FILE
 
   - name: Install flannel pod network
     shell: kubectl apply -f https://github.com/coreos/flannel/raw/master/Documentation/kube-flannel.yml
@@ -112,11 +106,6 @@
     become: true
     command: kubeadm token create --print-join-command
     register: join_command_for_workers
-# This command creates a bootstrap token
-# Bootstrap tokens are a simple bearer token that is meant to be used when creating new clusters or joining new nodes # to an existing cluster
-# We cannot see the result of this command on terminal sbut we can attach it to a variable with register
-# join_command_for_workers is the name of the variable we used here
-# Then we debug that variable to see the output and we use ninja template and put the variable inside
 
   - debug: msg='{{ join_command_for_workers.stdout.strip() }}'
 
@@ -125,25 +114,19 @@
       name: "kube_master"
       worker_join: "{{ join_command_for_workers.stdout.strip() }}"
 
-#Ansible add_host is an Ansible module which enables us to add hosts and groups dynamically in the in-memory inventory # of Ansible playbook during its execution.
-
-# BELOW IS A NEW PLAY. IT WILL BE FOR WORKER NODES
 - hosts: role_worker
   become: true
   tasks:
 
   - name: Join workers to cluster
-    shell: "{{ hostvars['kube_master']['worker_join'] }}" # after add_host hostvars can see worker_join
+    shell: "{{ hostvars['kube_master']['worker_join'] }}"
     register: result_of_joining
 
-# BELOW IS A NEW PLAY. IT WILL BE FOR MASTER NODE
 - hosts: role_master
   become: false
   tasks:
-# The patch command lets you apply a change to your running configuration by specifying only
-# the bit that you wish to change
-# kubectl patch node k8s-node-1 -p '{"spec":{"unschedulable":true}}'
-  - name: Patch the instances # We do this just to get the instance_id
+
+  - name: Patch the instances
     become: false
     shell: |
       cd /home/ubuntu
@@ -151,32 +134,29 @@
       kubectl patch node {{ hostvars[groups['role_worker'][0]]['private_dns_name'] }} -p '{"spec":{"providerID":"aws:///us-east-1a/{{ hostvars[groups['role_worker'][0]]['instance_id'] }}" }}'
       kubectl patch node {{ hostvars[groups['role_worker'][1]]['private_dns_name'] }} -p '{"spec":{"providerID":"aws:///us-east-1a/{{ hostvars[groups['role_worker'][1]]['instance_id'] }}" }}'
 
-# We will add aws-controller with helm so we need to install helm first, then get aws-controller with helm
-  - name: Deploy the required cloud-controller-manager
+  - name: Deploy the required cloud-controller-manager 
     shell: |
       cd /home/ubuntu
-      curl -fsSL -o get_helm.shhttps://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3
+      curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3
       chmod 777 get_helm.sh
       ./get_helm.sh
-      helm repo add aws-cloud-controller-managerhttps://kubernetes.github.io/cloud-provider-aws
+      helm repo add aws-cloud-controller-manager https://kubernetes.github.io/cloud-provider-aws
       helm repo update
       helm upgrade --install aws-cloud-controller-manager aws-cloud-controller-manager/aws-cloud-controller-manager --set image.tag=v1.20.0-alpha.0
+      
+  - name: Deploy Nginx Ingress 
+    shell: kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.1.2/deploy/static/provider/aws/deploy.yaml
 
-# We install ingress controller because we have microservices and we do not want to use separate load balancers
-  - name: Deploy Nginx Ingress
-    shell: kubectl apply -fhttps://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.1.2/deploy/static/provider/aws/deploy.yaml
-
-# We will use storageclass for that we need CSI Driver. With this we can get volume from EBS
   - name: Deploy AWS CSI Driver
     become: false
     shell: kubectl apply -k "github.com/kubernetes-sigs/aws-ebs-csi-driver/deploy/kubernetes/overlays/stable"
 
   - name: copy the storage.yml file
     become: yes
-    copy:
+    copy: 
       src: ./storage.yml
-      dest: /home/ubuntu/ # We will copy this file to master node
+      dest: /home/ubuntu/
 
   - name: create StorageClass object
     become: false
-    shell: kubectl apply -f storage.yml # We will apply the yaml file
+    shell: kubectl apply -f storage.yml
