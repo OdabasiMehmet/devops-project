@@ -1,0 +1,16 @@
+plugin: aws_ec2
+regions:
+  - "us-east-1"
+filters:
+  tag:Project: tera-kube-ans
+  tag:environment: dev
+  instance-state-name: running
+keyed_groups:
+  - key: tags['Project']
+    prefix: 'all_instances' # When we use prefix, the wording here is placed before the host names, 
+  - key: tags['Role']
+    prefix: 'role'  # if no prefix is used then it will be (_)underscore before host names
+hostnames:
+  - "ip-address"
+compose:
+  ansible_user: "'ubuntu'"
