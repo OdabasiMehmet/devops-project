@@ -1,0 +1,25 @@
+apiVersion: kubeadm.k8s.io/v1beta3
+kind: ClusterConfiguration
+kubernetesVersion: v1.23.5
+controlPlaneEndpoint: ${CONTROLPLANE_ENDPOINT} # to dynamically get the IP address 
+networking: # For networking, we will use flannel
+  podSubnet: 10.244.0.0/16
+apiServer:
+  extraArgs:
+    cloud-provider: external
+    enable-aggregator-routing: "true" # If we have more than one master node we use this parameter for the incoming traffic
+controllerManager:
+  extraArgs:
+    cloud-provider: external
+# Cloud provider is external as we will use a third party as apiServer. We will use AWS Cloud controller manager. 
+# When creating the cluster with kubeadm, kubeadm will use AWS resources, like EBS and load balancer.
+---
+apiVersion: kubeadm.k8s.io/v1beta3
+kind: InitConfiguration
+nodeRegistration:
+  kubeletExtraArgs:
+    cloud-provider: external
+---
+kind: KubeletConfiguration
+apiVersion: kubelet.config.k8s.io/v1beta1
+cgroupDriver: systemd
