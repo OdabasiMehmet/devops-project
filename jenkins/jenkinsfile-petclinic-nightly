@@ -151,7 +151,7 @@ pipeline {
  }
 
     post {  // This stage will run after the job
-        always {  # When we say always it will run whether fail or success
+        always {  // When we say always it will run whether fail or success
             echo 'Deleting all local images'
             sh 'docker image prune -af'
             echo 'Delete the Image Repository on ECR'
